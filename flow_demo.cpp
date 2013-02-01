@@ -15,10 +15,40 @@ using namespace cv;
 using namespace std;
 
 int verbose = 1;
+
+void writeOpticalFlowToFile(const Mat& flow, FILE* file);
+
 void MotionToColor(CFloatImage &motim, CByteImage &colim, float maxmotion);
 Mat_<Vec3b> MotionToColor(CFloatImage &motim, float maxmotion);
 
 void flowToImage(const Mat& flow, CFloatImage& img);
+
+// binary file format for flow data specified here:
+// http://vision.middlebury.edu/flow/data/
+void writeOpticalFlowToFile(const Mat& flow, FILE* file) {
+  int cols = flow.cols;
+  int rows = flow.rows;
+
+  fprintf(file, "PIEH");
+
+  if (fwrite(&cols, sizeof(int), 1, file) != 1 ||
+      fwrite(&rows, sizeof(int), 1, file) != 1) {
+    printf("writeOpticalFlowToFile : problem writing header\n");
+    exit(1);
+  }
+
+  for (int i= 0; i < rows; ++i) {
+    for (int j = 0; j < cols; ++j) {
+      Vec2f flow_at_point = flow.at<Vec2f>(i, j);
+
+      if (fwrite(&(flow_at_point[0]), sizeof(float), 1, file) != 1 ||
+          fwrite(&(flow_at_point[1]), sizeof(float), 1, file) != 1) {
+        printf("writeOpticalFlowToFile : problem writing data\n");
+        exit(1);
+      }
+    }
+  }
+}
 
 void MotionToColor(CFloatImage &motim, CByteImage &colim, float maxmotion)
 {
@@ -161,25 +191,48 @@ int main(int argc, char*argv[])
     if(!cap.isOpened())  // check if we succeeded
         return -1;
 
-    Mat edges;
+    bool save = false;
+    if(argc < 2)
+    {
+        std::cout << " Starting flow demo ... \n";
+        std::cout << " You can start by " << argv[0] << " save " << 
+                     " to save the frames to ./frames \n" << 
+                     " flow (x, y) to ./flow/ \n " << 
+                     " flow images to ./flow_image \n";
+    }
+    else if(argc == 2) 
+    {
+        std::cout << " Save info \n";
+        save = true;
+        system("mkdir -p  ./frames");
+        system("mkdir -p  ./flows");
+        system("mkdir -p  ./flow_images");
+    }
+
     namedWindow("flow", 1);
-    namedWindow("current_frame", 10);
+    namedWindow("current_frame", 2);
     Mat cur_frame;
     Mat cur_frame_small;
     Mat next_frame;
     Mat next_frame_small;
-    char* outname = argv[3];
     cap >> cur_frame;
-    resize(cur_frame, cur_frame_small, Size(), 0.10, 0.10, INTER_NEAREST);
+    int frame = 1;
     while(true)
     {
-        imwrite("frame_1.jpg", cur_frame); 
-        //waitKey(1);
+        resize(cur_frame, cur_frame_small, Size(), 0.10, 0.10, INTER_NEAREST);
+        if(save)
+        {
+            char frame_str[50];
+            sprintf(frame_str, "./frames/%05d.jpg", frame);
+            imwrite(frame_str, cur_frame); 
+        }
+
         cap >> next_frame; // get a new frame from camera
         resize(next_frame, next_frame_small, Size(), 0.10, 0.10, INTER_NEAREST);
-        imwrite("frame_2.jpg", next_frame); 
+
         Mat flow;
 
+        // Flow parameters
         float start = (float)getTickCount();
         int layers = 3;
         int averaging_block_size = 5;
@@ -206,19 +259,38 @@ int main(int argc, char*argv[])
         //calcOpticalFlowSF(cur_frame_small, next_frame_small,
         //                 flow,
         //                 3, 5, 10);
-        //calcOpticalFlowSF(cur_frame_small, next_frame_small, flow, 1, 15, 4);
+        
         printf("calcOpticalFlowSF : %lf sec\n", (getTickCount() - start) / getTickFrequency());
         std::cout << " Computed the flow" << std::endl;;
+
+        if(save)
+        {
+            char flow_str[50];
+            sprintf(flow_str, "./flows/%5d.flo", frame);
+            FILE* file = fopen(flow_str, "wb");
+            if (file == NULL) {
+              printf("Unable to open file '%s' for writing\n", flow_str);
+              exit(1);
+            }
+            writeOpticalFlowToFile(flow, file);
+            fclose(file);
+        }
 
 	    CFloatImage im, fband;
         flowToImage(flow, im);
 
-        float maxmotion = -1;
+        float maxmotion = 5;
         Mat_<Vec3b> outim = MotionToColor(im, maxmotion);  
 
         imshow("flow", outim);
         imshow("current_frame", next_frame_small);
-        imwrite("out.jpg", outim); 
+        if(save)
+        {
+            char img_str[50];
+            sprintf(img_str, "./flow_images/%5d.jpg", frame);
+            imwrite(img_str, outim); 
+        }
+        frame++;
         cur_frame = next_frame;
         if(waitKey(30) >= 0) break;
     }
