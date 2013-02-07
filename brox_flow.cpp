@@ -252,9 +252,7 @@ void getFlowField(const Mat& u, const Mat& v, Mat& flowField)
 }
 int main(int argc, char*argv[])
 {
-    //VideoCapture cap(0); // open the default camera
-    VideoCapture cap;
-    cap.open("/Users/jguan/data/psi/movies/map.avi");
+    VideoCapture cap(0); // open the default camera
     if(!cap.isOpened())  // check if we succeeded
         return -1;
 
