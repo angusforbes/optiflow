@@ -3,6 +3,7 @@
 #include "opencv2/video/tracking.hpp"
 #include "opencv2/imgproc/imgproc.hpp"
 #include "opencv2/highgui/highgui.hpp"
+#include "opencv2/gpu/gpu.hpp"
 
 #include <cstdio>
 #include <iostream>
@@ -13,6 +14,7 @@
 
 using namespace cv;
 using namespace std;
+using namespace cv::gpu;
 
 int verbose = 1;
 
@@ -22,6 +24,9 @@ void MotionToColor(CFloatImage &motim, CByteImage &colim, float maxmotion);
 Mat_<Vec3b> MotionToColor(CFloatImage &motim, float maxmotion);
 
 void flowToImage(const Mat& flow, CFloatImage& img);
+
+void getFlowField(const Mat& u, const Mat& v, Mat& flowField);
+
 
 // binary file format for flow data specified here:
 // http://vision.middlebury.edu/flow/data/
@@ -49,6 +54,8 @@ void writeOpticalFlowToFile(const Mat& flow, FILE* file) {
     }
   }
 }
+
+/* \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ */
 
 void MotionToColor(CFloatImage &motim, CByteImage &colim, float maxmotion)
 {
@@ -105,6 +112,8 @@ void MotionToColor(CFloatImage &motim, CByteImage &colim, float maxmotion)
         }
     }
 }
+
+/* \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ */
 
 Mat_<Vec3b> MotionToColor(CFloatImage &motim, float maxmotion)
 {
@@ -167,6 +176,8 @@ Mat_<Vec3b> MotionToColor(CFloatImage &motim, float maxmotion)
     return img;
 }
 
+/* \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ */
+
 void flowToImage(const Mat& flow, CFloatImage& img)
 {
     int cols = flow.cols;
@@ -185,6 +196,60 @@ void flowToImage(const Mat& flow, CFloatImage& img)
     }
 }
 
+/* \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ */
+
+template <typename T> inline T clamp (T x, T a, T b)
+{
+    return ((x) > (a) ? ((x) < (b) ? (x) : (b)) : (a));
+}
+
+/* \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ */
+
+template <typename T> inline T mapValue(T x, T a, T b, T c, T d)
+{
+    x = clamp(x, a, b);
+    return c + (d - c) * (x - a) / (b - a);
+}
+
+/* \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ */
+
+void getFlowField(const Mat& u, const Mat& v, Mat& flowField)
+{
+    float maxDisplacement = 1.0f;
+
+    for (int i = 0; i < u.rows; ++i)
+    {
+        const float* ptr_u = u.ptr<float>(i);
+        const float* ptr_v = v.ptr<float>(i);
+
+        for (int j = 0; j < u.cols; ++j)
+        {
+            float d = max(fabsf(ptr_u[j]), fabsf(ptr_v[j]));
+
+            if (d > maxDisplacement)
+                maxDisplacement = d;
+        }
+    }
+
+    flowField.create(u.size(), CV_8UC4);
+
+    for (int i = 0; i < flowField.rows; ++i)
+    {
+        const float* ptr_u = u.ptr<float>(i);
+        const float* ptr_v = v.ptr<float>(i);
+
+
+        Vec4b* row = flowField.ptr<Vec4b>(i);
+
+        for (int j = 0; j < flowField.cols; ++j)
+        {
+            row[j][0] = 0;
+            row[j][1] = static_cast<unsigned char> (mapValue (-ptr_v[j], -maxDisplacement, maxDisplacement, 0.0f, 255.0f));
+            row[j][2] = static_cast<unsigned char> (mapValue ( ptr_u[j], -maxDisplacement, maxDisplacement, 0.0f, 255.0f));
+            row[j][3] = 255;
+        }
+    }
+}
 int main(int argc, char*argv[])
 {
     //VideoCapture cap(0); // open the default camera
@@ -232,36 +297,32 @@ int main(int argc, char*argv[])
         cap >> next_frame; // get a new frame from camera
         resize(next_frame, next_frame_small, Size(), 0.25, 0.25, INTER_NEAREST);
 
-        Mat flow;
+        // Scale the frames to doubles 
+        cur_frame_small.convertTo(cur_frame_small, CV_32F, 1.0 / 255.0);
+        cur_frame_small.convertTo(cur_frame_small, CV_32F, 1.0 / 255.0);
 
-        // Flow parameters
+        Mat cur_frame_gray, next_frame_gray;
+        cvtColor(cur_frame_small, cur_frame_gray, COLOR_BGR2GRAY);
+        cvtColor(next_frame_small, next_frame_gray, COLOR_BGR2GRAY);
+
+        //GPU
+        cv::gpu::printShortCudaDeviceInfo(cv::gpu::getDevice());
+        GpuMat d_frame_cur(cur_frame_gray);
+        GpuMat d_frame_next(next_frame_gray);
+        double alpha = 0.012;
+        double gamma = 0.5;
+        double scale_factor = 0.5;
+        int inner_iter = 1;
+        int outer_iter = 3;
+        int sov_iter = 20;
+
+        BroxOpticalFlow brox(alpha, gamma, scale_factor, inner_iter, outer_iter, sov_iter);
+
+        GpuMat d_fu, d_fv;
         float start = (float)getTickCount();
-        int layers = 3;
-        int averaging_block_size = 5;
-        int max_flow = 4;
-        //double sigma_dist = 4.1;
-        double sigma_dist = 5.5;
-        //double sigma_color = 25.5;
-        double sigma_color = 0.08;
-        int postprocess_window = 20;
-        double sigma_dist_fix = 55.0;
-        double sigma_color_fix = 25.5;
-        double occ_thr = 0.35;
-        int upscale_averaging_radius = 18;
-        double upscale_sigma_dist = 55.0;
-        double upscale_sigma_color = 25.5;
-        //double speed_up_thr = 10;
-        double speed_up_thr = 5.0;
-        calcOpticalFlowSF(cur_frame_small, next_frame_small,
-                         flow,
-                         layers, averaging_block_size, max_flow, sigma_dist, sigma_color,
-                         postprocess_window, sigma_dist_fix, sigma_color_fix, occ_thr, 
-                         upscale_averaging_radius, upscale_sigma_dist, upscale_sigma_color, 
-                         speed_up_thr);
-
-        //calcOpticalFlowSF(cur_frame_small, next_frame_small,
-        //                 flow,
-        //                 3, 5, 10);
+        brox(d_frame_cur, d_frame_next, d_fu, d_fv);
+        Mat flow;
+        getFlowField(Mat(d_fu), Mat(d_fv), flow);
         
         printf("calcOpticalFlowSF : %lf sec\n", (getTickCount() - start) / getTickFrequency());
         std::cout << " Computed the flow" << std::endl;;
@@ -300,3 +361,4 @@ int main(int argc, char*argv[])
 
     return 0;
 }
+

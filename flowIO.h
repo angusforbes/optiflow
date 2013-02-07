@@ -1,4 +1,6 @@
 // flowIO.h
+#ifndef FLOW_IO_H
+#define FLOW_IO_H
 
 // the "official" threshold - if the absolute value of either 
 // flow component is greater, it's considered unknown
@@ -17,4 +19,4 @@ void ReadFlowFile(CFloatImage& img, const char* filename);
 // write a 2-band image into flow file 
 void WriteFlowFile(CFloatImage img, const char* filename);
 
-
+#endif
