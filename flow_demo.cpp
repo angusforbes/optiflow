@@ -187,9 +187,9 @@ void flowToImage(const Mat& flow, CFloatImage& img)
 
 int main(int argc, char*argv[])
 {
-    //VideoCapture cap(0); // open the default camera
-    VideoCapture cap;
-    cap.open("/Users/jguan/data/psi/movies/map.avi");
+    VideoCapture cap(0); // open the default camera
+    //VideoCapture cap;
+    //cap.open("/Users/jguan/data/psi/movies/map.avi");
     if(!cap.isOpened())  // check if we succeeded
         return -1;
 
@@ -236,21 +236,26 @@ int main(int argc, char*argv[])
 
         // Flow parameters
         float start = (float)getTickCount();
-        int layers = 3;
-        int averaging_block_size = 5;
+        //int layers = 3;
+        int layers = 1; //AGF
+        //int averaging_block_size = 5;
+        int averaging_block_size = 1; //AGF
         int max_flow = 4;
         //double sigma_dist = 4.1;
         double sigma_dist = 5.5;
         //double sigma_color = 25.5;
         double sigma_color = 0.08;
-        int postprocess_window = 20;
+        //int postprocess_window = 20;
+        int postprocess_window = 10; //AGF
         double sigma_dist_fix = 55.0;
         double sigma_color_fix = 25.5;
         double occ_thr = 0.35;
-        int upscale_averaging_radius = 18;
+        //int upscale_averaging_radius = 18;
+        int upscale_averaging_radius = 18; //AGF
         double upscale_sigma_dist = 55.0;
         double upscale_sigma_color = 25.5;
         //double speed_up_thr = 10;
+       // double speed_up_thr = 5.0;
         double speed_up_thr = 5.0;
         calcOpticalFlowSF(cur_frame_small, next_frame_small,
                          flow,
