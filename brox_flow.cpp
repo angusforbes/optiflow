@@ -57,6 +57,9 @@ int main(int argc, const char* argv[])
         int outer_iterations = cmd.get<int>("outer");
         int solver_iterations = cmd.get<int>("solver");
         float timeStep = cmd.get<float>("time_step");
+        inner_iterations = 5;
+        outer_iterations = 5;
+        solver_iterations = 2;
 
         //Mat frame0Color = imread(frame0Name);
         //Mat frame1Color = imread(frame1Name);

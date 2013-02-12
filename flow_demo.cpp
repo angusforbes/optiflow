@@ -59,7 +59,7 @@ int main(int argc, char*argv[])
         }
 
         cap >> next_frame; // get a new frame from camera
-        resize(next_frame, next_frame_small, Size(), 0.25, 0.25, INTER_NEAREST);
+        //resize(next_frame, next_frame_small, Size(), 0.25, 0.25, INTER_NEAREST);
 
         Mat flow;
 
