@@ -9,6 +9,8 @@
 
 #include <stdlib.h>
 #include <math.h>
+#include "colorcode.h"
+#include "flowIO.h"
 typedef unsigned char uchar;
 
 int ncols = 0;
@@ -71,4 +73,64 @@ void computeColor(float fx, float fy, uchar *pix)
 	    col *= .75; // out of range
 	pix[2 - b] = (int)(255.0 * col);
     }
+}
+
+cv::Mat_<cv::Vec3b> MotionToColor(CFloatImage &motim, float maxmotion)
+{
+    CShape sh = motim.Shape();
+    int width = sh.width, height = sh.height;
+    //Mat_<Vec3b> img(width, height, Vec3b(0,255,0));
+    cv::Mat_<cv::Vec3b> img(height, width, cv::Vec3b(0,255,0));
+    int x, y;
+    // determine motion range:
+    float maxx = -999, maxy = -999;
+    float minx =  999, miny =  999;
+    float maxrad = -1;
+    for (y = 0; y < height; y++) {
+	for (x = 0; x < width; x++) {
+	    float fx = motim.Pixel(x, y, 0);
+	    float fy = motim.Pixel(x, y, 1);
+	    if (unknown_flow(fx, fy))
+		continue;
+	    maxx = __max(maxx, fx);
+	    maxy = __max(maxy, fy);
+	    minx = __min(minx, fx);
+	    miny = __min(miny, fy);
+	    float rad = sqrt(fx * fx + fy * fy);
+	    maxrad = __max(maxrad, rad);
+        }
+    }
+    printf("max motion: %.4f  motion range: u = %.3f .. %.3f;  v = %.3f .. %.3f\n",
+	   maxrad, minx, maxx, miny, maxy);
+
+
+    if (maxmotion > 0) // i.e., specified on commandline
+	maxrad = maxmotion;
+
+    if (maxrad == 0) // if flow == 0 everywhere
+	maxrad = 1;
+
+	fprintf(stderr, "normalizing by %g\n", maxrad);
+
+    for (y = 0; y < height; y++) 
+    {
+        for (x = 0; x < width; x++) 
+        {
+            float fx = motim.Pixel(x, y, 0);
+            float fy = motim.Pixel(x, y, 1);
+            if (unknown_flow(fx, fy)) 
+            {
+                img(y, x)[0] = img(y, x)[1] = img(y, x)[2] = 0.0;
+            } 
+            else 
+            {
+                uchar pix[3] = {0.0, 0.0 ,0.0}; 
+                computeColor(fx/maxrad, fy/maxrad, pix);
+                img(y, x)[0] = pix[0];
+                img(y, x)[1] = pix[1];
+                img(y, x)[2] = pix[2];
+            }
+        }
+    }
+    return img;
 }

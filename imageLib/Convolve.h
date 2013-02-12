@@ -45,6 +45,9 @@
 //
 ///////////////////////////////////////////////////////////////////////////
 
+#ifndef IMAGE_LIB_CONVOLVE_H
+#define IMAGE_LIB_CONVOLVE_H
+
 template <class T>
 void Convolve(CImageOf<T> src, CImageOf<T>& dst,
               CFloatImage kernel,
@@ -61,3 +64,5 @@ extern CFloatImage ConvolveKernel_121;
 extern CFloatImage ConvolveKernel_1331;
 extern CFloatImage ConvolveKernel_14641;
 extern CFloatImage ConvolveKernel_8TapLowPass;
+
+#endif

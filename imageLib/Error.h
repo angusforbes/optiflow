@@ -10,7 +10,8 @@
 // See Copyright.h for more details
 //
 ///////////////////////////////////////////////////////////////////////////
-
+#ifndef IMAGE_LIB_ERROR_H
+#define IMAGE_LIB_ERROR_H
 namespace std {}
 using namespace std;
 
@@ -28,3 +29,5 @@ struct CError : public exception
             int d)                          { sprintf(message, fmt, s, d); }
     char message[1024];         // longest allowable message
 };
+
+#endif

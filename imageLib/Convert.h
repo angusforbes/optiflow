@@ -44,7 +44,8 @@
 // See Copyright.h for more details
 //
 ///////////////////////////////////////////////////////////////////////////
-
+#ifndef IMAGE_LIB_CONVERT_H
+#define IMAGE_LIB_CONVERT_H
 template <class T1, class T2>
 void ScaleAndOffsetLine(T1* src, T2* dst, int n,
                         float scale, float offset,
@@ -68,3 +69,5 @@ CImageOf<T> ConvertToGray(CImageOf<T> src);
 
 template <class T>
 void BandSelect(CImageOf<T>& src, CImageOf<T>& dst, int sBand, int dBand);
+
+#endif

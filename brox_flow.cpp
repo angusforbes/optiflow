@@ -1,10 +1,11 @@
 #include <iostream>
-#include <vector>
-#include <sstream>
+#include <iomanip>
+#include <string>
+#include <cstdio>
 
 #include "opencv2/core/core.hpp"
+#include "opencv2/core/opengl_interop.hpp"
 #include "opencv2/highgui/highgui.hpp"
-#include "opencv2/video/video.hpp"
 #include "opencv2/gpu/gpu.hpp"
 
 #include "imageLib.h"
@@ -14,15 +15,131 @@
 using namespace std;
 using namespace cv;
 using namespace cv::gpu;
+int verbose = 1;
+void getFlowField(const Mat& u, const Mat& v, Mat& flowField);
+void writeOpticalFlowToFile(const Mat& flow, FILE* file);
 
-/* \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ */
+int main(int argc, const char* argv[])
+{
+    VideoCapture cap(0); // open the default camera
+    if(!cap.isOpened())  // check if we succeeded
+        return -1;
+    try
+    {
+        const char* keys =
+           "{ h  | help      | false | print help message }"
+           "{ l  | left      |       | specify left image }"
+           "{ r  | right     |       | specify right image }"
+           "{ s  | scale     | 0.8   | set pyramid scale factor }"
+           "{ a  | alpha     | 0.197 | set alpha }"
+           "{ g  | gamma     | 50.0  | set gamma }"
+           "{ i  | inner     | 10    | set number of inner iterations }"
+           "{ o  | outer     | 77    | set number of outer iterations }"
+           "{ si | solver    | 10    | set number of basic solver iterations }"
+           "{ t  | time_step | 0.1   | set frame interpolation time step }";
+
+        CommandLineParser cmd(argc, argv, keys);
+
+        if (cmd.get<bool>("help"))
+        {
+            cout << "Usage: brox_optical_flow [options]" << endl;
+            cout << "Avaible options:" << endl;
+            cmd.printParams();
+            return 0;
+        }
+
+        //string frame0Name = cmd.get<string>("left");
+        //string frame1Name = cmd.get<string>("right");
+        float scale = cmd.get<float>("scale");
+        float alpha = cmd.get<float>("alpha");
+        float gamma = cmd.get<float>("gamma");
+        int inner_iterations = cmd.get<int>("inner");
+        int outer_iterations = cmd.get<int>("outer");
+        int solver_iterations = cmd.get<int>("solver");
+        float timeStep = cmd.get<float>("time_step");
+
+        //Mat frame0Color = imread(frame0Name);
+        //Mat frame1Color = imread(frame1Name);
+        Mat frame0Color;
+        Mat frame1Color;
+
+        namedWindow("flow", 1);
+        namedWindow("current_frame", 2);
+
+        cap >> frame0Color;
+        while(true)
+        {
+            cap >> frame1Color;
+            if (frame0Color.empty() || frame1Color.empty())
+            {
+                cout << "Can't load input images" << endl;
+                return -1;
+            }
+
+            cv::gpu::printShortCudaDeviceInfo(cv::gpu::getDevice());
+
+            frame0Color.convertTo(frame0Color, CV_32F, 1.0 / 255.0);
+            frame1Color.convertTo(frame1Color, CV_32F, 1.0 / 255.0);
+
+            Mat frame0Gray, frame1Gray;
+
+            cvtColor(frame0Color, frame0Gray, COLOR_BGR2GRAY);
+            cvtColor(frame1Color, frame1Gray, COLOR_BGR2GRAY);
+
+            GpuMat d_frame0(frame0Gray);
+            GpuMat d_frame1(frame1Gray);
+
+            cout << "Estimating optical flow" << endl;
+
+            BroxOpticalFlow d_flow(alpha, gamma, scale, inner_iterations, outer_iterations, solver_iterations);
+
+            cout << "\tForward..." << endl;
+
+            GpuMat d_fu, d_fv;
+
+            d_flow(d_frame0, d_frame1, d_fu, d_fv);
+                    
+            Mat flow;
+            getFlowField(Mat(d_fu), Mat(d_fv), flow);
+            /*FILE* file = fopen("./flow.flo", "wb");
+            if (file == NULL) {
+              printf("Unable to open file ./flow.flo for writing\n");
+              exit(1);
+            }
+            writeOpticalFlowToFile(flow, file);
+            */
+            CFloatImage im, fband;
+            flowToImage(flow, im);
+
+            float maxmotion = -1.0;
+            Mat_<Vec3b> outim = MotionToColor(im, maxmotion);  
+
+            imshow("flow", outim);
+            imshow("current_frame", frame1Color);
+            frame0Color = frame1Color;
+
+            if(waitKey(30) >= 0) break;
+        }
+
+    }
+    catch (const exception& ex)
+    {
+        cerr << ex.what() << endl;
+        return -1;
+    }
+    catch (...)
+    {
+        cerr << "Unknow error" << endl;
+        return -1;
+    }
+
+    return 0;
+}
 
 template <typename T> inline T clamp (T x, T a, T b)
 {
     return ((x) > (a) ? ((x) < (b) ? (x) : (b)) : (a));
 }
-
-/* \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ */
 
 template <typename T> inline T mapValue(T x, T a, T b, T c, T d)
 {
@@ -30,255 +147,80 @@ template <typename T> inline T mapValue(T x, T a, T b, T c, T d)
     return c + (d - c) * (x - a) / (b - a);
 }
 
-Mat_<Vec3b> MotionToColor(CFloatImage &motim, float maxmotion);
-void flowToImage(const Mat& flow, CFloatImage& img);
-void getFlowField(const Mat& u, const Mat& v, Mat& flowField);
-
-Mat_<Vec2f> getFlowField(const Mat& u, const Mat& v)
+void getFlowField(const Mat& u, const Mat& v, Mat& flowField)
 {
-    Mat_<Vec2f> img(u.rows, u.cols, Vec2f(255.f,255.f));
-    for (int y = 0; y < u.rows; ++y)
+    /*float maxDisplacement = 1.0f;
+
+    for (int i = 0; i < u.rows; ++i)
     {
-        for (int x = 0; x < u.cols; ++x)
+        const float* ptr_u = u.ptr<float>(i);
+        const float* ptr_v = v.ptr<float>(i);
+
+        for (int j = 0; j < u.cols; ++j)
         {
-            img(y, x)[0] = -v.at<float>(y, x);
-            img(y, x)[1] = u.at<float>(y, x);
+            float d = max(fabsf(ptr_u[j]), fabsf(ptr_v[j]));
 
-            if(u.at<float>(y,x) > 0.1) 
-            {
-              std::cout << img(y, x)[0] << " " << img(y, x)[1] << std::endl;
-            }
+            if (d > maxDisplacement) 
+                maxDisplacement = d;
         }
     }
-    return img; 
-    //std::cout << img.rows << " " << img.cols << std::endl;
-    //std::cerr << "finished getFlowFiled" << std::endl;
-}
-/* \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ */
 
-Mat_<Vec3b> MotionToColor(CFloatImage &motim, float maxmotion)
-{
-    CShape sh = motim.Shape();
-    int width = sh.width, height = sh.height;
-    //Mat_<Vec3b> img(width, height, Vec3b(0,255,0));
-    Mat_<Vec3b> img(height, width, Vec3b(0,255,0));
-    int x, y;
-    // determine motion range:
-    float maxx = -999, maxy = -999;
-    float minx =  999, miny =  999;
-    float maxrad = -1;
-    for (y = 0; y < height; y++) {
-	for (x = 0; x < width; x++) {
-	    float fx = motim.Pixel(x, y, 0);
-	    float fy = motim.Pixel(x, y, 1);
-	    if (unknown_flow(fx, fy))
-		continue;
-	    maxx = __max(maxx, fx);
-	    maxy = __max(maxy, fy);
-	    minx = __min(minx, fx);
-	    miny = __min(miny, fy);
-	    float rad = sqrt(fx * fx + fy * fy);
-	    maxrad = __max(maxrad, rad);
-        }
-    }
-    printf("max motion: %.4f  motion range: u = %.3f .. %.3f;  v = %.3f .. %.3f\n",
-	   maxrad, minx, maxx, miny, maxy);
+    flowField.create(u.size(), CV_8UC4);
 
-
-    if (maxmotion > 0) // i.e., specified on commandline
-	maxrad = maxmotion;
-
-    if (maxrad == 0) // if flow == 0 everywhere
-	maxrad = 1;
-
-
-    for (y = 0; y < height; y++) 
+    for (int i = 0; i < flowField.rows; ++i)
     {
-        for (x = 0; x < width; x++) 
+        const float* ptr_u = u.ptr<float>(i);
+        const float* ptr_v = v.ptr<float>(i);
+
+
+        Vec4b* row = flowField.ptr<Vec4b>(i);
+
+        for (int j = 0; j < flowField.cols; ++j)
         {
-            float fx = motim.Pixel(x, y, 0);
-            float fy = motim.Pixel(x, y, 1);
-            if (unknown_flow(fx, fy)) 
-            {
-                img(y, x)[0] = img(y, x)[1] = img(y, x)[2] = 0.0;
-            } 
-            else 
-            {
-                uchar pix[3] = {0.0, 0.0 ,0.0}; 
-                computeColor(fx/maxrad, fy/maxrad, pix);
-                img(y, x)[0] = pix[0];
-                img(y, x)[1] = pix[1];
-                img(y, x)[2] = pix[2];
-            }
+            row[j][0] = 0;
+            row[j][1] = static_cast<unsigned char> (mapValue (-ptr_v[j], -maxDisplacement, maxDisplacement, 0.0f, 255.0f));
+            row[j][2] = static_cast<unsigned char> (mapValue ( ptr_u[j], -maxDisplacement, maxDisplacement, 0.0f, 255.0f));
+            row[j][3] = 255;
         }
     }
-    return img;
-}
-
-/* \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ */
-
-void flowToImage(const Mat& flow, CFloatImage& img)
-{
-    int cols = flow.cols;
-    int rows = flow.rows;
-    int nBands = 2;
-    CShape sh(cols, rows, nBands);
-    img.ReAllocate(sh);
-    for (int i = 0; i < rows; i++) 
-    {
-        for (int j = 0; j < cols; j++) 
-        {
-            Vec2f flow_at_point = flow.at<Vec2f>(i, j);
-            img.Pixel(j, i, 0) = flow_at_point[0];
-            img.Pixel(j, i, 1) = flow_at_point[1];
-        }
-    }
-}
-
-
-template <typename T>
-inline T mapVal(T x, T a, T b, T c, T d)
-{
-    x = ::max(::min(x, b), a);
-    return c + (d-c) * (x-a) / (b-a);
-}
-
-static void colorizeFlow(const Mat &u, const Mat &v, Mat &dst)
-{
-    double uMin, uMax;
-    minMaxLoc(u, &uMin, &uMax, 0, 0);
-    double vMin, vMax;
-    minMaxLoc(v, &vMin, &vMax, 0, 0);
-    uMin = ::abs(uMin); uMax = ::abs(uMax);
-    vMin = ::abs(vMin); vMax = ::abs(vMax);
-    float dMax = static_cast<float>(::max(::max(uMin, uMax), ::max(vMin, vMax)));
-
-    dst.create(u.size(), CV_8UC3);
-    for (int y = 0; y < u.rows; ++y)
-    {
-        for (int x = 0; x < u.cols; ++x)
-        {
-            dst.at<uchar>(y,3*x) = 0;
-            dst.at<uchar>(y,3*x+1) = (uchar)mapVal(-v.at<float>(y,x), -dMax, dMax, 0.f, 255.f);
-            dst.at<uchar>(y,3*x+2) = (uchar)mapVal(u.at<float>(y,x), -dMax, dMax, 0.f, 255.f);
-        }
-    }
-}
-
-int main(int argc, char **argv)
-{
-    VideoCapture cap(0); // open the default camera
-    if(!cap.isOpened())  // check if we succeeded
-        return -1;
-
-    namedWindow("current_frame", 2);
-    CommandLineParser cmd(argc, argv,
-            "{ l | left | | specify left image }"
-            "{ r | right | | specify right image }"
-            "{ h | help | false | print help message }");
-
-    if (cmd.get<bool>("help"))
-    {
-        cout << "Farneback's optical flow sample.\n\n"
-             << "Usage: farneback_optical_flow_gpu [arguments]\n\n"
-             << "Arguments:\n";
-        cmd.printParams();
-        return 0;
-    }
-
-    /*string pathL = cmd.get<string>("left");
-    string pathR = cmd.get<string>("right");
-    if (pathL.empty()) cout << "Specify left image path\n";
-    if (pathR.empty()) cout << "Specify right image path\n";
-    if (pathL.empty() || pathR.empty()) return -1;
-
-    Mat frameL = imread(pathL, IMREAD_GRAYSCALE);
-    Mat frameR = imread(pathR, IMREAD_GRAYSCALE);
     */
-    Mat frameL;
-    Mat frameR;
-    
-    cap >> frameL;
-    while(true)
+    int cols = u.cols;
+    int rows = u.rows;
+    flowField.create(rows, cols, CV_32FC2);
+    for(int y = 0; y < rows; y++)
     {
-    cap >> frameR;
-
-    //if (frameL.empty()) cout << "Can't open '" << pathL << "'\n";
-    //if (frameR.empty()) cout << "Can't open '" << pathR << "'\n";
-    //if (frameL.empty() || frameR.empty()) return -1;
-
-    //frameL.convertTo(frameL, CV_32F, 1.0 / 255.0);
-    //frameR.convertTo(frameR, CV_32F, 1.0 / 255.0);
-    //frameL.convertTo(frameL, CV_8U);
-    //frameL.convertTo(frameL, CV_8U);
-
-    Mat frameLGray;
-    Mat frameRGray;
-
-    cvtColor(frameL, frameLGray, COLOR_BGR2GRAY);
-    cvtColor(frameR, frameRGray, COLOR_BGR2GRAY);
-
-    GpuMat d_frameL(frameLGray), d_frameR(frameRGray);
-    imshow("current_frame", frameRGray);
-    GpuMat d_flowx, d_flowy;
-    FarnebackOpticalFlow d_calc;
-    Mat flowxy, flowx, flowy, image;
-
-    bool running = true, gpuMode = true;
-    int64 t, t0=0, t1=1, tc0, tc1;
-
-    cout << "Use 'm' for CPU/GPU toggling\n";
-
-    t = getTickCount();
-
-        tc0 = getTickCount();
-        d_calc(d_frameL, d_frameR, d_flowx, d_flowy);
-        tc1 = getTickCount();
-        d_flowx.download(flowx);
-        d_flowy.download(flowy);
-
-        //Mat flow;
-        Mat_<Vec2f> flow = getFlowField(flowx, flowy);
-        std::cerr << " ** finished getFlowFiled" << std::endl;
-        CFloatImage im, fband;
-
-        std::cout << "XXXX\n"; 
-        std::cout << flow.rows << " " << flow.cols << std::endl;
-        flowToImage(flow, im);
-
-
-        std::cerr << " ** flowToImage" << std::endl;
-        Mat_<Vec3b> outim = MotionToColor(im, -1.0);  
-
-        //colorizeFlow(flowx, flowy, image);
-
-        stringstream s;
-        //s << "mode: " << (gpuMode?"GPU":"CPU");
-        putText(image, s.str(), Point(5, 25), FONT_HERSHEY_SIMPLEX, 1., Scalar(255,0,255), 2);
-
-        s.str("");
-        s << "opt. flow FPS: " << cvRound((getTickFrequency()/(tc1-tc0)));
-        putText(image, s.str(), Point(5, 65), FONT_HERSHEY_SIMPLEX, 1., Scalar(255,0,255), 2);
-
-        s.str("");
-        s << "total FPS: " << cvRound((getTickFrequency()/(t1-t0)));
-        putText(image, s.str(), Point(5, 105), FONT_HERSHEY_SIMPLEX, 1., Scalar(255,0,255), 2);
-
-        //imshow("flow", image);
-        imshow("flow", outim);
-
-        char ch = (char)waitKey(3);
-        /*if (ch == 27)
-            running = false;
-        else if (ch == 'm' || ch == 'M')
-            gpuMode = !gpuMode;
-            */
-
-        t0 = t;
-        t1 = getTickCount();
-        frameL = frameR;
-        if(waitKey(30) >= 0) break;
+        for(int x = 0; x < cols; x++)
+        {
+            flowField.at<Vec2f>(y, x)[0] = u.at<float>(y, x);
+            flowField.at<Vec2f>(y, x)[1] = v.at<float>(y, x);
+        }
     }
-
-    return 0;
 }
+
+/* \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ \/ */
+
+void writeOpticalFlowToFile(const Mat& flow, FILE* file) {
+  int cols = flow.cols;
+  int rows = flow.rows;
+
+  fprintf(file, "PIEH");
+
+  if (fwrite(&cols, sizeof(int), 1, file) != 1 ||
+      fwrite(&rows, sizeof(int), 1, file) != 1) {
+    printf("writeOpticalFlowToFile : problem writing header\n");
+    exit(1);
+  }
+
+  for (int i= 0; i < rows; ++i) {
+    for (int j = 0; j < cols; ++j) {
+      Vec2f flow_at_point = flow.at<Vec2f>(i, j);
+
+      if (fwrite(&(flow_at_point[0]), sizeof(float), 1, file) != 1 ||
+          fwrite(&(flow_at_point[1]), sizeof(float), 1, file) != 1) {
+        printf("writeOpticalFlowToFile : problem writing data\n");
+        exit(1);
+      }
+    }
+  }
+}
+

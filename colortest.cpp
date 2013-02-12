@@ -8,6 +8,7 @@ static char usage[] = "usage: %s range outimage [size]\n";
 # include <math.h>
 #include "imageLib.h"
 #include "colorcode.h"
+#include "flowIO.h"
 
 int main(int argc, char **argv)
 {

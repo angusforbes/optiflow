@@ -24,7 +24,7 @@
 #define TAG_FLOAT 202021.25  // check for this when READING the file
 #define TAG_STRING "PIEH"    // use this when WRITING the file
 
-
+#include <opencv2/opencv.hpp>
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
@@ -155,3 +155,54 @@ int main() {
     return 0;
 }
 */
+
+void flowToImage(const cv::Mat& flow, CFloatImage& img)
+{
+    int cols = flow.cols;
+    int rows = flow.rows;
+    int nBands = 2;
+    CShape sh(cols, rows, nBands);
+    img.ReAllocate(sh);
+    for (int i = 0; i < rows; i++) 
+    {
+        for (int j = 0; j < cols; j++) 
+        {
+            cv::Vec2f flow_at_point = flow.at<cv::Vec2f>(i, j);
+            img.Pixel(j, i, 0) = flow_at_point[0];
+            img.Pixel(j, i, 1) = flow_at_point[1];
+        }
+    }
+}
+
+void writeOpticalFlowToFile(const cv::Mat& flow, const char* filename) {
+  int cols = flow.cols;
+  int rows = flow.rows;
+
+  using namespace cv;
+  FILE* file = fopen(filename, "wb");
+    if (file == NULL) {
+      printf("Unable to open file '%s' for writing\n", filename);
+      exit(1);
+    }
+  fprintf(file, "PIEH");
+
+  if (fwrite(&cols, sizeof(int), 1, file) != 1 ||
+      fwrite(&rows, sizeof(int), 1, file) != 1) {
+    printf("writeOpticalFlowToFile : problem writing header\n");
+    exit(1);
+  }
+
+  for (int i= 0; i < rows; ++i) {
+    for (int j = 0; j < cols; ++j) {
+      Vec2f flow_at_point = flow.at<Vec2f>(i, j);
+
+      if (fwrite(&(flow_at_point[0]), sizeof(float), 1, file) != 1 ||
+          fwrite(&(flow_at_point[1]), sizeof(float), 1, file) != 1) {
+        printf("writeOpticalFlowToFile : problem writing data\n");
+        exit(1);
+      }
+    }
+  }
+
+  fclose(file);
+}
