@@ -12,7 +12,7 @@ OpenCV 2.4.3 issues / workarounds
 - Used these flags to set build packages:
   > cmake -DWITH_QT=YES -DWITH_CUDA=YES -DWITH_FFMPEG=OFF -DWITH_OPENGL=ON
   > make
-
+  > sudo make install
   
 - Trying to build FFMPEG via MacPorts with some extra flags (hopefully this will allow me to use -DWITH_FFMPEG_ON):
     > sudo port install ffmpeg +gpl +postproc +lame +theora +libogg +vorbis +xvid +x264 +a52 +faac +faad +dts +nonfree
@@ -26,8 +26,7 @@ OpenCV 2.4.3 issues / workarounds
 (//this may not be necessary if we have FFMPEG built properly - see below)
 
 
-- Had to comment out reference to glXUseXFont which is not supported by Apples GL or AGL framework
-
+- Had to comment out reference to glXUseXFont which is not supported by Apples GL or AGL framework in this file: /Users/angus/OpenCV-2.4.3/modules/highgui/src/window_QT.cpp
 
 FFMPEG issues
 
