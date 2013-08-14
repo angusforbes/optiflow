@@ -59,7 +59,7 @@ int main(int argc, char*argv[])
         }
 
         cap >> next_frame; // get a new frame from camera
-        //resize(next_frame, next_frame_small, Size(), 0.25, 0.25, INTER_NEAREST);
+        resize(next_frame, next_frame_small, Size(), 0.25, 0.25, INTER_NEAREST);
 
         Mat flow;
 
@@ -93,10 +93,6 @@ int main(int argc, char*argv[])
                          postprocess_window, sigma_dist_fix, sigma_color_fix, occ_thr, 
                          upscale_averaging_radius, upscale_sigma_dist, upscale_sigma_color, 
                          speed_up_thr);
-
-        //calcOpticalFlowSF(cur_frame_small, next_frame_small,
-        //                 flow,
-        //                 3, 5, 10);
         
         printf("calcOpticalFlowSF : %lf sec\n", (getTickCount() - start) / getTickFrequency());
         std::cout << " Computed the flow" << std::endl;;
@@ -122,6 +118,7 @@ int main(int argc, char*argv[])
             sprintf(img_str, "./flow_images/%5d.jpg", frame);
             imwrite(img_str, outim); 
         }
+
         frame++;
         cur_frame = next_frame;
         if(waitKey(30) >= 0) break;
